@@ -1,0 +1,34 @@
+BetterRJSHelpers
+
+BetterRJSHelpers attempts to solve a shortcoming in Rails 2.3, namely that the normal suite of helpers is not available.
+
+When a RJS template is created, or block executed via update_page, a JavaScriptGenerator object is substituted in for the regular ActionView::Base object.  The JavaScriptGenerator, by default, does not have access to any helpers except those defined in JavaScriptGenerator, some of JavaScripGenerator's helper classed defined in PrototypeHelper, any helpers you've explicitly named in your Controller and ApplicationHelper.  The normal helpers from ActionView::Base are not immediately available.  This behavior is very confusing as there's no indication that it's happening and I've yet to find any documentation on the subject.
+
+As an example of the problem, consider the following helper:
+
+class ApplicationHelper
+  def render_rjs_errors
+    page.replace_html :errors, error_messages_for(:account)
+  end
+end
+
+As explained in the Rails docs (http://api.rubyonrails.org/classes/ActionView/Helpers/PrototypeHelper/JavaScriptGenerator/GeneratorMethods.html) your helper with magically have access to a method called page.  What's actually happening is that your helper has been included into the JavaScriptGenerator object which has a method called page which, when called, will return self.  Makes sense so far.  But what happens when we get to error_messages_for?  We're in a JavaScriptGenerator but none of the normal ActionView::Helpers have been included!  Instead we hit a method_missing implementation in JavaScriptHelper that routes our error_message_for call to a JavaScriptProxy object that tries to do some fancy mangling to generate some Javascript from our call.  Not quite what we were looking for.
+
+One simple but ugly solution is to use the @context member variable of JavaScriptGenerator.  As we're working in a module that's been included into the generator object we have access to all its members.  The @context member holds a reference to the original ActionView::Base instance which will still have all the helpers we were looking for.
+
+class ApplicationHelper
+  def render_rjs_errors
+    page.replace_html :errors, @context.error_messages_for(:account)
+  end
+end
+
+Great, it works!  But it's also kind of lame.  Where did @context come from?  Why do none of the other helpers refer to it?  The page call is magic enough, accessing a member variable of a class we randomly got included into is just crazy.  Enter BetterRJSHelpers.
+
+BetterRJSHelpers is just a few lines of Ruby that enhances the method_missing implementation in JavaScriptGenerator to first check @context to see if it responds to the method in question.  If it does, pass it off to there.  If not, use the JavaScriptProxy.  Clean RJS once again!
+
+# With BetterRJSHelpers
+class ApplicationHelper
+  def render_rjs_errors
+    page.replace_html :errors, error_messages_for(:account)
+  end
+end
